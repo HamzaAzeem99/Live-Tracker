@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Live Location Tracker</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+
+<style>
+  :root {
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+    --success: #10b981;
+    --success-hover: #059669;
+    --bg: #f8fafc;
+    --text: #1e293b;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  h1 {
+    background: #0f172a;
+    color: white;
+    padding: 14px 15px;
+    margin: 0;
+    font-size: 1.25rem;
+    text-align: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    z-index: 1000;
+  }
+
+  #map-container {
+    flex: 1;
+    position: relative;
+    width: 100%;
+  }
+
+  #map {
+    width: 100%;
+    height: 100%;
+  }
+
+  .control-panel {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    padding: 15px;
+    border-radius: 14px;
+    box-shadow: 0 4px 25px rgba(0, 0, 0, 0.15);
+    width: 90%;
+    max-width: 380px;
+    box-sizing: border-box;
+    text-align: center;
+  }
+
+  .btn {
+    padding: 13px 20px;
+    border: none;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    width: 100%;
+    margin: 6px 0;
+  }
+
+  .btn:active {
+    transform: scale(0.97);
+  }
+
+  .btn-primary {
+    background: var(--primary);
+    color: white;
+  }
+
+  .btn-success {
+    background: var(--success);
+    color: white;
+  }
+
+  .btn-copy {
+    background: #64748b;
+    color: white;
+  }
+
+  .btn-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .btn-row .btn {
+    margin: 0;
+    flex: 1;
+  }
+
+  #status {
+    margin: 12px 0 4px 0;
+    font-size: 0.9rem;
+    color: #64748b;
+    font-weight: 500;
+  }
+</style>
+</head>
+<body>
+
+<h1>Live Location Tracker</h1>
+
+<div id="map-container">
+  <div class="control-panel">
+    <button id="startBtn" class="btn btn-primary" onclick="startTracking()">
+      Start Live Location Sharing
+    </button>
+    
+    <div id="shareOptions" class="btn-row" style="display: none;">
+      <button class="btn btn-success" onclick="shareWhatsApp()">
+        📲 WhatsApp
+      </button>
+      <button class="btn btn-copy" onclick="copyLink()">
+        📋 Copy Link
+      </button>
+    </div>
+
+    <p id="status">Ready</p>
+  </div>
+
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
+import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-database.js";
+
+// Firebase Config
+const firebaseConfig = {
+  apiKey: "AIzaSyBlmbq7wB_IfKAUVgLoh6rK9F1IQPqG1Y",
+  authDomain: "live-map-40eee.firebaseapp.com",
+  databaseURL: "https://live-map-40eee-default-rtdb.firebaseio.com",
+  projectId: "live-map-40eee",
+  storageBucket: "live-map-40eee.firebasestorage.app",
+  messagingSenderId: "886609126465",
+  appId: "1:886609126465:web:099c5d8524803ae4be12c0"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+let map, watchId, currentSessionRef, sessionId = null;
+const userId = localStorage.getItem("tracker_userId") || crypto.randomUUID();
+localStorage.setItem("tracker_userId", userId);
+
+// Initialize Map
+map = L.map('map', { zoomControl: false }).setView([30.3753, 69.3451], 5);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap'
+}).addTo(map);
+
+let markers = {};
+
+// Get session ID from URL
+function getSessionIdFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("room");
+}
+
+// Start Tracking
+window.startTracking = function() {
+  if (!sessionId) {
+    sessionId = Math.floor(100000 + Math.random() * 900000).toString();
+    history.replaceState({}, '', `?room=${sessionId}`);
+  }
+
+  document.getElementById("startBtn").style.display = "none";
+  document.getElementById("shareOptions").style.display = "flex";
+  document.getElementById("status").innerText = `Live ID: ${sessionId}`;
+
+  startLiveSession(sessionId);
+};
+
+function startLiveSession(sid) {
+  sessionId = sid;
+
+  if (navigator.geolocation) {
+    watchId = navigator.geolocation.watchPosition(pos => {
+      const { latitude: lat, longitude: lng } = pos.coords;
+
+      document.getElementById("status").innerText = `✅ Live Tracking Active`;
+
+      set(ref(db, `sessions/${sessionId}/${userId}`), {
+        lat,
+        lng,
+        time: Date.now()
+      });
+    }, err => {
+      console.error(err);
+      document.getElementById("status").innerText = "⚠️ GPS Error";
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
+  }
+
+  currentSessionRef = ref(db, `sessions/${sessionId}`);
+  onValue(currentSessionRef, snapshot => {
+    const data = snapshot.val();
+    if (!data) return;
+
+    let points = [];
+
+    Object.keys(data).forEach(id => {
+      const { lat, lng } = data[id];
+      points.push([lat, lng]);
+
+      if (!markers[id]) {
+        markers[id] = L.marker([lat, lng]).addTo(map);
+        markers[id].bindPopup(id === userId ? "<b>You</b>" : "<b>Friend</b>").openPopup();
+      } else {
+        markers[id].setLatLng([lat, lng]);
+      }
+    });
+
+    if (points.length > 0) {
+      map.fitBounds(L.latLngBounds(points), { padding: [50, 50], maxZoom: 17 });
+    }
+  });
+}
+
+// Copy Link Function
+window.copyLink = function() {
+  const link = `${window.location.origin}${window.location.pathname}?room=${sessionId}`;
+  
+  navigator.clipboard.writeText(link).then(() => {
+    const originalText = document.querySelector('.btn-copy').textContent;
+    document.querySelector('.btn-copy').textContent = '✅ Copied!';
+    
+    setTimeout(() => {
+      document.querySelector('.btn-copy').textContent = originalText;
+    }, 2000);
+  });
+};
+
+// WhatsApp Share
+window.shareWhatsApp = function() {
+  if (!sessionId) return;
+  
+  const link = `${window.location.origin}${window.location.pathname}?room=${sessionId}`;
+  const message = encodeURIComponent(`🔴 Live Location Sharing\nJoin now: ${link}`);
+  
+  window.open(`https://wa.me/?text=${message}`, '_blank');
+};
+
+// Auto Join from Link
+window.addEventListener('load', () => {
+  const room = getSessionIdFromURL();
+  if (room) {
+    sessionId = room;
+    document.getElementById("startBtn").style.display = "none";
+    document.getElementById("shareOptions").style.display = "flex";
+    startLiveSession(room);
+  }
+});
+</script>
+
+</body>
+</html>

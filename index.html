@@ -3,52 +3,31 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Live Location Tracker</title>
+<title>Live Group Tracker</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
 
 <style>
-  :root {
-    --primary: #2563eb;
-    --primary-hover: #1d4ed8;
-    --success: #10b981;
-    --success-hover: #059669;
-    --bg: #f8fafc;
-    --text: #1e293b;
-  }
-
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    margin: 0;
-    padding: 0;
-    background-color: var(--bg);
-    color: var(--text);
-    display: flex;
-    flex-direction: column;
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     height: 100vh;
     overflow: hidden;
+    background: #f8fafc;
   }
 
   h1 {
     background: #0f172a;
     color: white;
-    padding: 14px 15px;
+    padding: 14px;
     margin: 0;
-    font-size: 1.25rem;
     text-align: center;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    z-index: 1000;
-  }
-
-  #map-container {
-    flex: 1;
-    position: relative;
-    width: 100%;
+    font-size: 1.3rem;
   }
 
   #map {
     width: 100%;
-    height: 100%;
+    height: calc(100vh - 56px);
   }
 
   .control-panel {
@@ -57,14 +36,13 @@
     left: 50%;
     transform: translateX(-50%);
     z-index: 1000;
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(10px);
+    background: rgba(255,255,255,0.96);
+    backdrop-filter: blur(12px);
     padding: 15px;
     border-radius: 14px;
-    box-shadow: 0 4px 25px rgba(0, 0, 0, 0.15);
-    width: 90%;
-    max-width: 380px;
-    box-sizing: border-box;
+    box-shadow: 0 4px 25px rgba(0,0,0,0.2);
+    width: 92%;
+    max-width: 400px;
     text-align: center;
   }
 
@@ -75,72 +53,38 @@
     font-weight: 600;
     font-size: 1rem;
     cursor: pointer;
-    transition: all 0.2s;
     width: 100%;
     margin: 6px 0;
   }
 
-  .btn:active {
-    transform: scale(0.97);
-  }
+  .btn-primary { background: #2563eb; color: white; }
+  .btn-success { background: #10b981; color: white; }
+  .btn-copy { background: #64748b; color: white; }
 
-  .btn-primary {
-    background: var(--primary);
-    color: white;
-  }
+  .btn-row { display: flex; gap: 8px; margin-top: 8px; }
+  .btn-row .btn { margin: 0; flex: 1; }
 
-  .btn-success {
-    background: var(--success);
-    color: white;
-  }
-
-  .btn-copy {
-    background: #64748b;
-    color: white;
-  }
-
-  .btn-row {
-    display: flex;
-    gap: 8px;
-    margin-top: 8px;
-  }
-
-  .btn-row .btn {
-    margin: 0;
-    flex: 1;
-  }
-
-  #status {
-    margin: 12px 0 4px 0;
-    font-size: 0.9rem;
-    color: #64748b;
-    font-weight: 500;
-  }
+  #status { margin: 10px 0 5px 0; font-weight: 500; font-size: 0.95rem; }
+  #online { font-size: 0.9rem; color: #10b981; margin: 5px 0; }
 </style>
 </head>
 <body>
 
-<h1>Live Location Tracker</h1>
+<h1>Live Group Tracker</h1>
+<div id="map"></div>
 
-<div id="map-container">
-  <div class="control-panel">
-    <button id="startBtn" class="btn btn-primary" onclick="startTracking()">
-      Start Live Location Sharing
-    </button>
-    
-    <div id="shareOptions" class="btn-row" style="display: none;">
-      <button class="btn btn-success" onclick="shareWhatsApp()">
-        📲 WhatsApp
-      </button>
-      <button class="btn btn-copy" onclick="copyLink()">
-        📋 Copy Link
-      </button>
-    </div>
-
-    <p id="status">Ready</p>
+<div class="control-panel">
+  <button id="startBtn" class="btn btn-primary" onclick="startTracking()">
+    Start Live Sharing
+  </button>
+  
+  <div id="shareOptions" class="btn-row" style="display: none;">
+    <button class="btn btn-success" onclick="shareWhatsApp()">📲 WhatsApp</button>
+    <button class="btn btn-copy" onclick="copyLink()">📋 Copy Link</button>
   </div>
 
-  <div id="map"></div>
+  <p id="status">Ready</p>
+  <p id="online">0 people online</p>
 </div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
@@ -149,7 +93,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
 import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-database.js";
 
-// Firebase Config
 const firebaseConfig = {
   apiKey: "AIzaSyBlmbq7wB_IfKAUVgLoh6rK9F1IQPqG1Y",
   authDomain: "live-map-40eee.firebaseapp.com",
@@ -163,26 +106,23 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-let map, watchId, currentSessionRef, sessionId = null;
+let map, watchId = null, sessionId = null;
 const userId = localStorage.getItem("tracker_userId") || crypto.randomUUID();
 localStorage.setItem("tracker_userId", userId);
 
-// Initialize Map
 map = L.map('map', { zoomControl: false }).setView([30.3753, 69.3451], 5);
 L.control.zoom({ position: 'bottomright' }).addTo(map);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '&copy; OpenStreetMap'
-}).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
 let markers = {};
+let circles = {};
+let lastBoundsUpdate = 0;
 
-// Get session ID from URL
-function getSessionIdFromURL() {
-  const params = new URLSearchParams(window.location.search);
-  return params.get("room");
+// Get Room ID
+function getRoomFromURL() {
+  return new URLSearchParams(window.location.search).get("room");
 }
 
-// Start Tracking
 window.startTracking = function() {
   if (!sessionId) {
     sessionId = Math.floor(100000 + Math.random() * 900000).toString();
@@ -191,7 +131,7 @@ window.startTracking = function() {
 
   document.getElementById("startBtn").style.display = "none";
   document.getElementById("shareOptions").style.display = "flex";
-  document.getElementById("status").innerText = `Live ID: ${sessionId}`;
+  document.getElementById("status").innerText = `Room: ${sessionId}`;
 
   startLiveSession(sessionId);
 };
@@ -199,75 +139,91 @@ window.startTracking = function() {
 function startLiveSession(sid) {
   sessionId = sid;
 
+  // GPS Tracking
   if (navigator.geolocation) {
-    watchId = navigator.geolocation.watchPosition(pos => {
-      const { latitude: lat, longitude: lng } = pos.coords;
+    watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+        document.getElementById("status").innerText = `✅ Live Tracking Active`;
 
-      document.getElementById("status").innerText = `✅ Live Tracking Active`;
-
-      set(ref(db, `sessions/${sessionId}/${userId}`), {
-        lat,
-        lng,
-        time: Date.now()
-      });
-    }, err => {
-      console.error(err);
-      document.getElementById("status").innerText = "⚠️ GPS Error";
-    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
+        set(ref(db, `sessions/${sessionId}/${userId}`), {
+          lat, lng, accuracy, time: Date.now()
+        });
+      },
+      (err) => console.error(err),
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
+    );
   }
 
-  currentSessionRef = ref(db, `sessions/${sessionId}`);
-  onValue(currentSessionRef, snapshot => {
-    const data = snapshot.val();
-    if (!data) return;
+  // Real-time All Users + Smart Auto Zoom
+  onValue(ref(db, `sessions/${sessionId}`), (snapshot) => {
+    const data = snapshot.val() || {};
+    const userCount = Object.keys(data).length;
+    
+    document.getElementById("online").innerText = `${userCount} people online`;
 
     let points = [];
 
     Object.keys(data).forEach(id => {
-      const { lat, lng } = data[id];
-      points.push([lat, lng]);
+      const user = data[id];
+      const isMe = id === userId;
+
+      points.push([user.lat, user.lng]);
 
       if (!markers[id]) {
-        markers[id] = L.marker([lat, lng]).addTo(map);
-        markers[id].bindPopup(id === userId ? "<b>You</b>" : "<b>Friend</b>").openPopup();
+        markers[id] = L.marker([user.lat, user.lng]).addTo(map);
+        markers[id].bindPopup(isMe ? "<b>You</b>" : "<b>Friend</b>");
+
+        circles[id] = L.circle([user.lat, user.lng], {
+          radius: user.accuracy || 30,
+          color: isMe ? '#2563eb' : '#10b981',
+          fillOpacity: 0.18
+        }).addTo(map);
       } else {
-        markers[id].setLatLng([lat, lng]);
+        markers[id].setLatLng([user.lat, user.lng]);
+        circles[id].setLatLng([user.lat, user.lng]);
+        circles[id].setRadius(user.accuracy || 30);
       }
     });
 
-    if (points.length > 0) {
-      map.fitBounds(L.latLngBounds(points), { padding: [50, 50], maxZoom: 17 });
+    // ============== Smart Auto Zoom ==============
+    if (points.length > 0 && Date.now() - lastBoundsUpdate > 3000) {  // 3 seconds mein ek baar
+      lastBoundsUpdate = Date.now();
+      
+      if (points.length === 1) {
+        map.flyTo(points[0], 16, { duration: 1.2 });
+      } else {
+        const bounds = L.latLngBounds(points);
+        map.flyToBounds(bounds, { 
+          padding: [60, 60], 
+          maxZoom: 17,
+          duration: 1.5 
+        });
+      }
     }
   });
 }
 
-// Copy Link Function
+// Share Functions
 window.copyLink = function() {
   const link = `${window.location.origin}${window.location.pathname}?room=${sessionId}`;
-  
   navigator.clipboard.writeText(link).then(() => {
-    const originalText = document.querySelector('.btn-copy').textContent;
-    document.querySelector('.btn-copy').textContent = '✅ Copied!';
-    
-    setTimeout(() => {
-      document.querySelector('.btn-copy').textContent = originalText;
-    }, 2000);
+    const btn = document.querySelector('.btn-copy');
+    const old = btn.textContent;
+    btn.textContent = '✅ Copied!';
+    setTimeout(() => btn.textContent = old, 2000);
   });
 };
 
-// WhatsApp Share
 window.shareWhatsApp = function() {
-  if (!sessionId) return;
-  
   const link = `${window.location.origin}${window.location.pathname}?room=${sessionId}`;
-  const message = encodeURIComponent(`🔴 Live Location Sharing\nJoin now: ${link}`);
-  
-  window.open(`https://wa.me/?text=${message}`, '_blank');
+  const msg = encodeURIComponent(`🔴 Group Live Location\nSab join ho jao: ${link}`);
+  window.open(`https://wa.me/?text=${msg}`, '_blank');
 };
 
-// Auto Join from Link
+// Auto Join
 window.addEventListener('load', () => {
-  const room = getSessionIdFromURL();
+  const room = getRoomFromURL();
   if (room) {
     sessionId = room;
     document.getElementById("startBtn").style.display = "none";
@@ -276,6 +232,5 @@ window.addEventListener('load', () => {
   }
 });
 </script>
-
 </body>
 </html>

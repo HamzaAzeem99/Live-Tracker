@@ -91,7 +91,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
-import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-database.js";
+import { getDatabase, ref, set, onValue, onDisconnect, remove } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-database.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBlmbq7wB_IfKAUVgLoh6rK9F1IQPqG1Y",
@@ -106,7 +106,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-let map, watchId = null, sessionId = null;
+let map, watchId = null, sessionId = null, myRef = null;
 const userId = localStorage.getItem("tracker_userId") || crypto.randomUUID();
 localStorage.setItem("tracker_userId", userId);
 
@@ -118,7 +118,6 @@ let markers = {};
 let circles = {};
 let lastBoundsUpdate = 0;
 
-// Get Room ID
 function getRoomFromURL() {
   return new URLSearchParams(window.location.search).get("room");
 }
@@ -138,6 +137,10 @@ window.startTracking = function() {
 
 function startLiveSession(sid) {
   sessionId = sid;
+  myRef = ref(db, `sessions/${sessionId}/${userId}`);
+
+  // Auto remove jab user page band kare
+  onDisconnect(myRef).remove();
 
   // GPS Tracking
   if (navigator.geolocation) {
@@ -146,16 +149,19 @@ function startLiveSession(sid) {
         const { latitude: lat, longitude: lng, accuracy } = pos.coords;
         document.getElementById("status").innerText = `✅ Live Tracking Active`;
 
-        set(ref(db, `sessions/${sessionId}/${userId}`), {
-          lat, lng, accuracy, time: Date.now()
+        set(myRef, {
+          lat,
+          lng,
+          accuracy,
+          time: Date.now()
         });
       },
-      (err) => console.error(err),
+      (err) => console.error("GPS Error:", err),
       { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
     );
   }
 
-  // Real-time All Users + Smart Auto Zoom
+  // Real-time Data + Cleanup Logic
   onValue(ref(db, `sessions/${sessionId}`), (snapshot) => {
     const data = snapshot.val() || {};
     const userCount = Object.keys(data).length;
@@ -164,11 +170,12 @@ function startLiveSession(sid) {
 
     let points = [];
 
+    // Update / Add markers
     Object.keys(data).forEach(id => {
       const user = data[id];
-      const isMe = id === userId;
-
       points.push([user.lat, user.lng]);
+
+      const isMe = id === userId;
 
       if (!markers[id]) {
         markers[id] = L.marker([user.lat, user.lng]).addTo(map);
@@ -186,32 +193,40 @@ function startLiveSession(sid) {
       }
     });
 
-    // ============== Smart Auto Zoom ==============
-    if (points.length > 0 && Date.now() - lastBoundsUpdate > 3000) {  // 3 seconds mein ek baar
+    // Remove users who left
+    Object.keys(markers).forEach(id => {
+      if (!data[id]) {
+        if (markers[id]) map.removeLayer(markers[id]);
+        if (circles[id]) map.removeLayer(circles[id]);
+        delete markers[id];
+        delete circles[id];
+      }
+    });
+
+    // Smart Auto Zoom
+    if (points.length > 0 && Date.now() - lastBoundsUpdate > 2500) {
       lastBoundsUpdate = Date.now();
-      
       if (points.length === 1) {
         map.flyTo(points[0], 16, { duration: 1.2 });
       } else {
-        const bounds = L.latLngBounds(points);
-        map.flyToBounds(bounds, { 
-          padding: [60, 60], 
+        map.flyToBounds(L.latLngBounds(points), {
+          padding: [70, 70],
           maxZoom: 17,
-          duration: 1.5 
+          duration: 1.3
         });
       }
     }
   });
-}
+};
 
 // Share Functions
 window.copyLink = function() {
   const link = `${window.location.origin}${window.location.pathname}?room=${sessionId}`;
   navigator.clipboard.writeText(link).then(() => {
     const btn = document.querySelector('.btn-copy');
-    const old = btn.textContent;
+    const oldText = btn.textContent;
     btn.textContent = '✅ Copied!';
-    setTimeout(() => btn.textContent = old, 2000);
+    setTimeout(() => btn.textContent = oldText, 2000);
   });
 };
 
@@ -221,7 +236,7 @@ window.shareWhatsApp = function() {
   window.open(`https://wa.me/?text=${msg}`, '_blank');
 };
 
-// Auto Join
+// Auto Join from Link
 window.addEventListener('load', () => {
   const room = getRoomFromURL();
   if (room) {

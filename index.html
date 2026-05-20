@@ -22,24 +22,12 @@
     text-align: center;
     font-size: 1.4rem;
   }
-  #map {
-    width: 100%;
-    height: calc(100vh - 56px);
-  }
+  #map { width: 100%; height: calc(100vh - 56px); }
   .control-panel {
-    position: absolute;
-    top: 12px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 1000;
-    background: rgba(255,255,255,0.97);
-    backdrop-filter: blur(12px);
-    padding: 16px;
-    border-radius: 16px;
-    box-shadow: 0 4px 30px rgba(0,0,0,0.15);
-    width: 90%;
-    max-width: 380px;
-    text-align: center;
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 1000; background: rgba(255,255,255,0.97); backdrop-filter: blur(12px);
+    padding: 16px; border-radius: 16px; box-shadow: 0 4px 30px rgba(0,0,0,0.15);
+    width: 90%; max-width: 380px; text-align: center;
   }
   .btn {
     padding: 14px 20px;
@@ -54,14 +42,10 @@
   .btn-primary { background: #2563eb; color: white; }
   .btn-success { background: #10b981; color: white; }
   .btn-copy { background: #475569; color: white; }
+  .btn-retry { background: #ef4444; color: white; }
   .btn-row { display: flex; gap: 10px; }
   .btn-row .btn { margin: 0; flex: 1; }
-  #status {
-    margin: 12px 0 8px 0;
-    font-size: 1rem;
-    font-weight: 500;
-    color: #334155;
-  }
+  #status { margin: 12px 0 8px 0; font-size: 1rem; font-weight: 500; color: #334155; }
 </style>
 </head>
 <body>
@@ -78,6 +62,10 @@
     <button class="btn btn-success" onclick="shareWhatsApp()">📲 WhatsApp</button>
     <button class="btn btn-copy" onclick="copyLink()">📋 Copy Link</button>
   </div>
+
+  <button id="retryBtn" class="btn btn-retry" style="display: none;" onclick="retryGPS()">
+    🔄 Retry GPS
+  </button>
 
   <p id="status">Ready</p>
 </div>
@@ -111,11 +99,8 @@ let circles = {};
 // Initialize Map
 map = L.map('map', { zoomControl: false }).setView([30.3753, 69.3451], 5);
 L.control.zoom({ position: 'bottomright' }).addTo(map);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '&copy; OpenStreetMap'
-}).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-// Get Room ID from URL
 function getRoomFromURL() {
   return new URLSearchParams(window.location.search).get("room");
 }
@@ -128,7 +113,7 @@ window.startTracking = function() {
 
   document.getElementById("startBtn").style.display = "none";
   document.getElementById("shareOptions").style.display = "flex";
-  document.getElementById("status").innerText = `Room: ${sessionId}`;
+  document.getElementById("status").innerText = `Room: ${sessionId} | Connecting GPS...`;
 
   startLiveSession(sessionId);
 };
@@ -136,15 +121,15 @@ window.startTracking = function() {
 function startLiveSession(sid) {
   sessionId = sid;
   myRef = db.ref(`sessions/${sessionId}/${userId}`);
-
-  // Auto remove when user leaves
   myRef.onDisconnect().remove();
 
-  // Start GPS
+  document.getElementById("retryBtn").style.display = "none";
+
   if (navigator.geolocation) {
     watchId = navigator.geolocation.watchPosition(
       (pos) => {
         document.getElementById("status").innerText = `✅ Live Tracking Active`;
+        document.getElementById("retryBtn").style.display = "none";
 
         myRef.set({
           lat: pos.coords.latitude,
@@ -155,17 +140,28 @@ function startLiveSession(sid) {
       },
       (err) => {
         console.error(err);
-        document.getElementById("status").innerText = "❌ GPS Error - Allow Location";
+        let msg = "❌ GPS Error";
+        if (err.code === 1) msg = "❌ Permission Denied - Allow Location";
+        else if (err.code === 2) msg = "❌ Location Unavailable";
+        else if (err.code === 3) msg = "❌ GPS Timeout";
+
+        document.getElementById("status").innerText = msg;
+        document.getElementById("retryBtn").style.display = "block";
       },
-      { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }
+      { 
+        enableHighAccuracy: true, 
+        maximumAge: 5000, 
+        timeout: 20000 
+      }
     );
+  } else {
+    document.getElementById("status").innerText = "❌ GPS Not Supported";
   }
 
-  // Real-time Listener
+  // Real-time updates
   db.ref(`sessions/${sessionId}`).on('value', (snapshot) => {
     const data = snapshot.val() || {};
-    const count = Object.keys(data).length;
-    document.getElementById("status").innerText = `${count} people online`;
+    document.getElementById("status").innerText = `${Object.keys(data).length} people online`;
 
     let points = [];
 
@@ -189,7 +185,7 @@ function startLiveSession(sid) {
       }
     });
 
-    // Remove users who left
+    // Remove offline users
     Object.keys(markers).forEach(id => {
       if (!data[id]) {
         if (markers[id]) map.removeLayer(markers[id]);
@@ -199,29 +195,29 @@ function startLiveSession(sid) {
       }
     });
 
-    // Auto Zoom
-    if (points.length === 1) {
-      map.flyTo(points[0], 16, { duration: 1 });
-    } else if (points.length > 1) {
-      map.flyToBounds(L.latLngBounds(points), { padding: [70, 70], duration: 1.2 });
-    }
+    if (points.length === 1) map.flyTo(points[0], 16);
+    else if (points.length > 1) map.flyToBounds(L.latLngBounds(points), { padding: [60, 60] });
   });
+}
+
+window.retryGPS = function() {
+  if (watchId) navigator.geolocation.clearWatch(watchId);
+  document.getElementById("status").innerText = "Retrying GPS...";
+  startLiveSession(sessionId);
 };
 
 window.copyLink = function() {
-  const link = window.location.href;
-  navigator.clipboard.writeText(link).then(() => {
-    alert("✅ Link Copied Successfully!");
+  navigator.clipboard.writeText(window.location.href).then(() => {
+    alert("✅ Link Copied!");
   });
 };
 
 window.shareWhatsApp = function() {
-  const link = window.location.href;
-  const text = encodeURIComponent(`🔴 Live Group Location\nJoin Now: ${link}`);
+  const text = encodeURIComponent(`🔴 Join Live Group Location: ${window.location.href}`);
   window.open(`https://wa.me/?text=${text}`, "_blank");
 };
 
-// Auto Join if link has ?room=
+// Auto Join
 window.addEventListener('load', () => {
   const room = getRoomFromURL();
   if (room) {

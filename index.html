@@ -78,12 +78,7 @@
 // Firebase Config
 const firebaseConfig = {
   apiKey: "AIzaSyBlmbq7wB_IfKAUVgLoh6rK9F1IQPqG1Y",
-  authDomain: "live-map-40eee.firebaseapp.com",
-  databaseURL: "https://live-map-40eee-default-rtdb.firebaseio.com",
-  projectId: "live-map-40eee",
-  storageBucket: "live-map-40eee.firebasestorage.app",
-  messagingSenderId: "886609126465",
-  appId: "1:886609126465:web:099c5d8524803ae4be12c0"
+  databaseURL: "https://live-map-40eee-default-rtdb.firebaseio.com"
 };
 
 firebase.initializeApp(firebaseConfig);
@@ -95,6 +90,7 @@ localStorage.setItem("tracker_userId", userId);
 
 let markers = {};
 let circles = {};
+let lastUpdate = 0;
 
 // Initialize Map
 map = L.map('map', { zoomControl: false }).setView([30.3753, 69.3451], 5);
@@ -113,7 +109,7 @@ window.startTracking = function() {
 
   document.getElementById("startBtn").style.display = "none";
   document.getElementById("shareOptions").style.display = "flex";
-  document.getElementById("status").innerText = `Room: ${sessionId} | Connecting GPS...`;
+  document.getElementById("status").innerText = `Room: ${sessionId}`;
 
   startLiveSession(sessionId);
 };
@@ -125,6 +121,7 @@ function startLiveSession(sid) {
 
   document.getElementById("retryBtn").style.display = "none";
 
+  // GPS Tracking
   if (navigator.geolocation) {
     watchId = navigator.geolocation.watchPosition(
       (pos) => {
@@ -139,29 +136,18 @@ function startLiveSession(sid) {
         });
       },
       (err) => {
-        console.error(err);
-        let msg = "❌ GPS Error";
-        if (err.code === 1) msg = "❌ Permission Denied - Allow Location";
-        else if (err.code === 2) msg = "❌ Location Unavailable";
-        else if (err.code === 3) msg = "❌ GPS Timeout";
-
-        document.getElementById("status").innerText = msg;
+        document.getElementById("status").innerText = "❌ Permission Denied - Allow Location";
         document.getElementById("retryBtn").style.display = "block";
       },
-      { 
-        enableHighAccuracy: true, 
-        maximumAge: 5000, 
-        timeout: 20000 
-      }
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }
     );
-  } else {
-    document.getElementById("status").innerText = "❌ GPS Not Supported";
   }
 
-  // Real-time updates
+  // Real-time Live Movement + Cleanup
   db.ref(`sessions/${sessionId}`).on('value', (snapshot) => {
     const data = snapshot.val() || {};
-    document.getElementById("status").innerText = `${Object.keys(data).length} people online`;
+    const count = Object.keys(data).length;
+    document.getElementById("status").innerText = `${count} people online`;
 
     let points = [];
 
@@ -179,30 +165,42 @@ function startLiveSession(sid) {
           fillOpacity: 0.2
         }).addTo(map);
       } else {
+        // Smooth movement
         markers[id].setLatLng([user.lat, user.lng]);
         circles[id].setLatLng([user.lat, user.lng]);
         circles[id].setRadius(user.accuracy || 30);
       }
     });
 
-    // Remove offline users
+    // Remove users who left
     Object.keys(markers).forEach(id => {
       if (!data[id]) {
-        if (markers[id]) map.removeLayer(markers[id]);
-        if (circles[id]) map.removeLayer(circles[id]);
+        map.removeLayer(markers[id]);
+        map.removeLayer(circles[id]);
         delete markers[id];
         delete circles[id];
       }
     });
 
-    if (points.length === 1) map.flyTo(points[0], 16);
-    else if (points.length > 1) map.flyToBounds(L.latLngBounds(points), { padding: [60, 60] });
+    // Smart Auto Zoom
+    if (points.length > 0 && Date.now() - lastUpdate > 2500) {
+      lastUpdate = Date.now();
+      if (points.length === 1) {
+        map.flyTo(points[0], 16, { duration: 1.2 });
+      } else {
+        map.flyToBounds(L.latLngBounds(points), { 
+          padding: [70, 70], 
+          maxZoom: 17,
+          duration: 1.3 
+        });
+      }
+    }
   });
 }
 
 window.retryGPS = function() {
   if (watchId) navigator.geolocation.clearWatch(watchId);
-  document.getElementById("status").innerText = "Retrying GPS...";
+  document.getElementById("status").innerText = "Retrying...";
   startLiveSession(sessionId);
 };
 
